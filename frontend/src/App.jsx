@@ -71,12 +71,29 @@ function App() {
       return;
     }
 
-    const socket = io(SOCKET_URL, { autoConnect: false });
+    const socket = io(SOCKET_URL, {
+      autoConnect: false,
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: 10
+    });
     socketRef.current = socket;
     socket.connect();
 
     socket.on("connect", () => {
+      console.log("✅ Socket connected:", socket.id);
       socket.emit("auth", { token: jwtToken });
+    });
+
+    socket.on("connect_error", (error) => {
+      console.error("❌ Socket connection error:", error);
+      setError("Failed to connect to server. Please check your connection.");
+    });
+
+    socket.on("disconnect", () => {
+      console.log("⚠️ Socket disconnected");
     });
 
     socket.on("auth:error", () => {
@@ -226,7 +243,21 @@ function App() {
 
   const createPeerConnection = (toUserId) => {
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        // Free TURN server for production fallback
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
+      ]
     });
 
     pc.onicecandidate = (event) => {
@@ -236,24 +267,36 @@ function App() {
           candidate: event.candidate,
           callId: activeCall?.callId
         });
+        console.log("📤 ICE Candidate sent:", event.candidate.candidate);
       }
     };
 
     pc.ontrack = (event) => {
-      setRemoteStream(event.streams[0]);
+      console.log("📥 Remote track received:", event.track.kind);
+      const remoteStream = event.streams[0];
+      if (remoteStream) {
+        setRemoteStream(remoteStream);
+        console.log("✅ Remote stream set:", remoteStream.id);
+      }
     };
 
     // Detect when peer connection is closed or fails
     pc.onconnectionstatechange = () => {
+      console.log("🔗 Connection state:", pc.connectionState);
       if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.connectionState === "disconnected") {
         cleanupCall();
       }
     };
 
     pc.oniceconnectionstatechange = () => {
+      console.log("❄️ ICE Connection state:", pc.iceConnectionState);
       if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "closed") {
         cleanupCall();
       }
+    };
+
+    pc.onicegatheringstatechange = () => {
+      console.log("🧊 ICE Gathering state:", pc.iceGatheringState);
     };
 
     return pc;
@@ -266,26 +309,33 @@ function App() {
     }
 
     try {
+      console.log("📞 Starting call to:", toUserId, "Type:", type);
       const media = await navigator.mediaDevices.getUserMedia({
-        video: type === "video",
+        video: type === "video" ? { width: 640, height: 480 } : false,
         audio: true
       });
 
       localStreamRef.current = media;
       setLocalStream(media);
+      console.log("🎥 Local stream acquired:", media.id);
 
       const pc = createPeerConnection(toUserId);
       pcRef.current = pc;
 
-      media.getTracks().forEach((track) => pc.addTrack(track, media));
+      media.getTracks().forEach((track) => {
+        pc.addTrack(track, media);
+        console.log("📤 Track added:", track.kind);
+      });
 
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+      console.log("📋 Offer created");
 
       setActiveCall({ toUserId, type, callId: null });
       socketRef.current.emit("call:initiate", { toUserId, type, offer });
     } catch (err) {
-      setError("Failed to start call");
+      console.error("❌ Call start error:", err);
+      setError("Failed to start call: " + (err.message || "Unknown error"));
     }
   };
 
@@ -293,22 +343,29 @@ function App() {
     if (!incomingCall || !socketRef.current) return;
 
     try {
+      console.log("✅ Accepting call from:", incomingCall.fromUserId, "Type:", incomingCall.type);
       const media = await navigator.mediaDevices.getUserMedia({
-        video: incomingCall.type === "video",
+        video: incomingCall.type === "video" ? { width: 640, height: 480 } : false,
         audio: true
       });
 
       localStreamRef.current = media;
       setLocalStream(media);
+      console.log("🎥 Local stream acquired:", media.id);
 
       const pc = createPeerConnection(incomingCall.fromUserId);
       pcRef.current = pc;
 
-      media.getTracks().forEach((track) => pc.addTrack(track, media));
+      media.getTracks().forEach((track) => {
+        pc.addTrack(track, media);
+        console.log("📤 Track added:", track.kind);
+      });
 
+      console.log("📋 Setting remote description...");
       await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
+      console.log("📋 Answer created");
 
       socketRef.current.emit("call:answer", {
         callId: incomingCall.callId,
@@ -319,7 +376,8 @@ function App() {
       setActiveCall({ toUserId: incomingCall.fromUserId, type: incomingCall.type, callId: incomingCall.callId });
       setIncomingCall(null);
     } catch (err) {
-      setError("Failed to accept call");
+      console.error("❌ Call accept error:", err);
+      setError("Failed to accept call: " + (err.message || "Unknown error"));
     }
   };
 

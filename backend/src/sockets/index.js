@@ -8,15 +8,19 @@ const setupSocket = (io) => {
     const activeCalls = new Map(); // Track active calls: callId -> { caller, callee }
 
     io.on("connection", (socket) => {
+        console.log("🔌 New socket connection:", socket.id);
+
         socket.on("auth", async ({ token }) => {
             try {
                 const payload = jwt.verify(token, env.jwtSecret);
                 socket.userId = payload.userId;
                 onlineUsers.set(socket.userId, socket.id);
                 socket.emit("auth:ok", { userId: socket.userId });
+                console.log("✅ User authenticated:", socket.userId, "Socket:", socket.id);
 
                 io.emit("user:online", { userId: socket.userId });
             } catch (error) {
+                console.error("❌ Auth error:", error.message);
                 socket.emit("auth:error", { message: "Invalid token" });
             }
         });
@@ -26,12 +30,15 @@ const setupSocket = (io) => {
                 return socket.emit("call:error", { message: "Unauthorized" });
             }
 
+            console.log(`📞 Call initiate: ${socket.userId} -> ${toUserId} (${type})`);
+
             // Check if target user is already in a call
             const userIsInCall = Array.from(activeCalls.values()).some(
                 (call) => call.callee === toUserId || call.caller === toUserId
             );
 
             if (userIsInCall) {
+                console.log(`⛔ User ${toUserId} is busy`);
                 return socket.emit("call:busy", { toUserId });
             }
 
@@ -48,11 +55,13 @@ const setupSocket = (io) => {
             });
 
             if (!targetSocketId) {
+                console.log(`👤 User ${toUserId} is offline`);
                 return socket.emit("call:unavailable", { callId, toUserId });
             }
 
             // Track the active call
             activeCalls.set(callId, { caller: socket.userId, callee: toUserId });
+            console.log(`✅ Call tracked: ${callId}`);
 
             io.to(targetSocketId).emit("call:incoming", {
                 callId,
@@ -60,15 +69,19 @@ const setupSocket = (io) => {
                 type,
                 offer
             });
+            console.log(`📤 call:incoming sent to ${toUserId}`);
         });
 
         socket.on("call:answer", ({ callId, toUserId, answer }) => {
+            console.log(`✅ Call answer: ${socket.userId} -> ${toUserId}`);
             const targetSocketId = onlineUsers.get(toUserId);
             if (!targetSocketId) {
+                console.log(`👤 Target user ${toUserId} not found`);
                 return socket.emit("call:unavailable", { callId, toUserId });
             }
 
             io.to(targetSocketId).emit("call:answer", { callId, answer, fromUserId: socket.userId });
+            console.log(`📤 call:answer sent to ${toUserId}`);
         });
 
         socket.on("call:ice", ({ callId, toUserId, candidate }) => {
@@ -78,6 +91,7 @@ const setupSocket = (io) => {
             }
 
             io.to(targetSocketId).emit("call:ice", { callId, candidate, fromUserId: socket.userId });
+            console.log(`❄️ ICE candidate forwarded: ${socket.userId} -> ${toUserId}`);
         });
 
         socket.on("call:hangup", async ({ callId, toUserId }) => {
