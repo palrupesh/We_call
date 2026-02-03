@@ -310,29 +310,43 @@ function App() {
 
     try {
       console.log("📞 Starting call to:", toUserId, "Type:", type);
-      const media = await navigator.mediaDevices.getUserMedia({
-        video: type === "video" ? { width: 640, height: 480 } : false,
-        audio: true
-      });
+      
+      try {
+        const media = await navigator.mediaDevices.getUserMedia({
+          video: type === "video" ? { width: 640, height: 480 } : false,
+          audio: true
+        });
 
-      localStreamRef.current = media;
-      setLocalStream(media);
-      console.log("🎥 Local stream acquired:", media.id);
+        localStreamRef.current = media;
+        setLocalStream(media);
+        console.log("🎥 Local stream acquired:", media.id);
 
-      const pc = createPeerConnection(toUserId);
-      pcRef.current = pc;
+        const pc = createPeerConnection(toUserId);
+        pcRef.current = pc;
 
-      media.getTracks().forEach((track) => {
-        pc.addTrack(track, media);
-        console.log("📤 Track added:", track.kind);
-      });
+        media.getTracks().forEach((track) => {
+          pc.addTrack(track, media);
+          console.log("📤 Track added:", track.kind);
+        });
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      console.log("📋 Offer created");
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        console.log("📋 Offer created");
 
-      setActiveCall({ toUserId, type, callId: null });
-      socketRef.current.emit("call:initiate", { toUserId, type, offer });
+        setActiveCall({ toUserId, type, callId: null });
+        socketRef.current.emit("call:initiate", { toUserId, type, offer });
+      } catch (mediaErr) {
+        // Handle getUserMedia specific errors
+        if (mediaErr.name === "NotAllowedError") {
+          throw new Error("Camera/microphone permission denied. Please check browser permissions.");
+        } else if (mediaErr.name === "NotFoundError") {
+          throw new Error("No camera/microphone found on this device.");
+        } else if (mediaErr.name === "NotReadableError") {
+          throw new Error("Camera/microphone is already in use by another application.");
+        } else {
+          throw mediaErr;
+        }
+      }
     } catch (err) {
       console.error("❌ Call start error:", err);
       setError("Failed to start call: " + (err.message || "Unknown error"));
@@ -344,37 +358,51 @@ function App() {
 
     try {
       console.log("✅ Accepting call from:", incomingCall.fromUserId, "Type:", incomingCall.type);
-      const media = await navigator.mediaDevices.getUserMedia({
-        video: incomingCall.type === "video" ? { width: 640, height: 480 } : false,
-        audio: true
-      });
+      
+      try {
+        const media = await navigator.mediaDevices.getUserMedia({
+          video: incomingCall.type === "video" ? { width: 640, height: 480 } : false,
+          audio: true
+        });
 
-      localStreamRef.current = media;
-      setLocalStream(media);
-      console.log("🎥 Local stream acquired:", media.id);
+        localStreamRef.current = media;
+        setLocalStream(media);
+        console.log("🎥 Local stream acquired:", media.id);
 
-      const pc = createPeerConnection(incomingCall.fromUserId);
-      pcRef.current = pc;
+        const pc = createPeerConnection(incomingCall.fromUserId);
+        pcRef.current = pc;
 
-      media.getTracks().forEach((track) => {
-        pc.addTrack(track, media);
-        console.log("📤 Track added:", track.kind);
-      });
+        media.getTracks().forEach((track) => {
+          pc.addTrack(track, media);
+          console.log("📤 Track added:", track.kind);
+        });
 
-      console.log("📋 Setting remote description...");
-      await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      console.log("📋 Answer created");
+        console.log("📋 Setting remote description...");
+        await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        console.log("📋 Answer created");
 
-      socketRef.current.emit("call:answer", {
-        callId: incomingCall.callId,
-        toUserId: incomingCall.fromUserId,
-        answer
-      });
+        socketRef.current.emit("call:answer", {
+          callId: incomingCall.callId,
+          toUserId: incomingCall.fromUserId,
+          answer
+        });
 
-      setActiveCall({ toUserId: incomingCall.fromUserId, type: incomingCall.type, callId: incomingCall.callId });
-      setIncomingCall(null);
+        setActiveCall({ toUserId: incomingCall.fromUserId, type: incomingCall.type, callId: incomingCall.callId });
+        setIncomingCall(null);
+      } catch (mediaErr) {
+        // Handle getUserMedia specific errors
+        if (mediaErr.name === "NotAllowedError") {
+          throw new Error("Camera/microphone permission denied. Please check browser permissions.");
+        } else if (mediaErr.name === "NotFoundError") {
+          throw new Error("No camera/microphone found on this device.");
+        } else if (mediaErr.name === "NotReadableError") {
+          throw new Error("Camera/microphone is already in use by another application.");
+        } else {
+          throw mediaErr;
+        }
+      }
     } catch (err) {
       console.error("❌ Call accept error:", err);
       setError("Failed to accept call: " + (err.message || "Unknown error"));

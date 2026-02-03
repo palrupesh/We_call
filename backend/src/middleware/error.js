@@ -3,7 +3,16 @@ export const notFound = (req, res, next) => {
 };
 
 export const errorHandler = (err, req, res, next) => {
-    const status = err.status || 500;
+    // Handle rate limit errors gracefully
+    if (err.code === "ERR_ERL_UNEXPECTED_X_FORWARDED_FOR") {
+        console.warn("⚠️ Rate limit proxy error (harmless):", err.message);
+        // Don't fail the request, just log it
+        return next();
+    }
+
+    const status = err.status || err.statusCode || 500;
     const message = err.message || "Server error";
+    
+    console.error(`❌ Error [${status}]:`, message);
     res.status(status).json({ message });
 };

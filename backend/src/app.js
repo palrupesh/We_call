@@ -14,6 +14,9 @@ import notificationsRoutes from "./routes/notifications.js";
 
 const app = express();
 
+// Trust proxy - needed for Render and other reverse proxies
+app.set("trust proxy", 1);
+
 app.use(helmet());
 app.use(cors({ origin: env.corsOrigin, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
@@ -22,7 +25,18 @@ app.use(morgan("dev"));
 
 const apiLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    max: 300
+    max: 300,
+    keyGenerator: (req, res) => {
+        // Use X-Forwarded-For if behind proxy, otherwise use IP
+        return req.ip || req.connection.remoteAddress || "unknown";
+    },
+    skip: (req, res) => {
+        // Skip rate limiting for health checks and socket.io
+        return req.path === "/api/health";
+    },
+    handler: (req, res) => {
+        res.status(429).json({ message: "Too many requests, please try again later" });
+    }
 });
 
 app.use("/api", apiLimiter);
