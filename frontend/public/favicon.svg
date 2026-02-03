@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#646cff"></rect>
+
+  <!-- Phone icon -->
+  <path d="M22 14h20a2 2 0 0 1 2 2v32a2 2 0 0 1-2 2H22a2 2 0 0 1-2-2V16a2 2 0 0 1 2-2z" fill="white"></path>
+
+  <circle cx="32" cy="46" r="2" fill="#646cff"></circle>
+</svg>

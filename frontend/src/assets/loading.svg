@@ -1,0 +1,9 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+  <circle cx="60" cy="60" r="50" stroke="#646cff" stroke-width="10" fill="none" stroke-linecap="round" stroke-dasharray="75 200">
+    <animateTransform attributeName="transform" type="rotate" from="0 60 60" to="360 60 60" dur="1s" repeatCount="indefinite"></animateTransform>
+  </circle>
+
+  <text x="60" y="66" text-anchor="middle" font-size="14" fill="#646cff" font-family="Inter, Arial, sans-serif">
+    call_me
+  </text>
+</svg>

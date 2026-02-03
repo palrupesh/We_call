@@ -1,0 +1,511 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { io } from "socket.io-client";
+import api, { setAuthToken, setLogoutCallback } from "./api";
+import Header from "./components/Header";
+import AuthForm from "./components/AuthForm";
+import SearchUsers from "./components/SearchUsers";
+import Contacts from "./components/Contacts";
+import Notifications from "./components/Notifications";
+import CallHistory from "./components/CallHistory";
+import LiveCall from "./components/LiveCall";
+import AlertBox from "./components/AlertBox";
+import CallDeclined from "./components/CallDeclined";
+import "./App.css";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL;
+
+function App() {
+  const [token, setToken] = useState(() => localStorage.getItem("wecall_token") || "");
+  const [user, setUser] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [contacts, setContacts] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [calls, setCalls] = useState([]);
+
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+
+  const [incomingCall, setIncomingCall] = useState(null);
+  const [activeCall, setActiveCall] = useState(null);
+  const [localStream, setLocalStream] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
+  const [callDeclined, setCallDeclined] = useState(null);
+  const [sidebarTab, setSidebarTab] = useState("search");
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notifClosing, setNotifClosing] = useState(false);
+
+  const socketRef = useRef(null);
+  const pcRef = useRef(null);
+  const localStreamRef = useRef(null);
+  const notifTimerRef = useRef(null);
+
+  const isAuthed = useMemo(() => Boolean(token), [token]);
+
+  // Register logout callback for API interceptor
+  useEffect(() => {
+    setLogoutCallback(() => {
+      setToken("");
+      setError("Your session has expired. Please login again.");
+    });
+  }, []);
+
+  useEffect(() => {
+    setAuthToken(token);
+    if (token) {
+      localStorage.setItem("wecall_token", token);
+      initSocket(token);
+      fetchBootstrap();
+    } else {
+      localStorage.removeItem("wecall_token");
+      setUser(null);
+      cleanupCall();
+      disconnectSocket();
+    }
+  }, [token]);
+
+  const initSocket = (jwtToken) => {
+    if (socketRef.current) {
+      return;
+    }
+
+    const socket = io(SOCKET_URL, { autoConnect: false });
+    socketRef.current = socket;
+    socket.connect();
+
+    socket.on("connect", () => {
+      socket.emit("auth", { token: jwtToken });
+    });
+
+    socket.on("auth:error", () => {
+      setError("Socket authentication failed. Please login again.");
+      setToken(""); // Logout user on socket auth failure
+    });
+
+    socket.on("call:incoming", (payload) => {
+      setIncomingCall(payload);
+    });
+
+    socket.on("call:answer", async ({ answer }) => {
+      if (pcRef.current && answer) {
+        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+      }
+    });
+
+    socket.on("call:ice", async ({ candidate }) => {
+      if (pcRef.current && candidate) {
+        try {
+          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+
+    socket.on("call:hangup", () => {
+      cleanupCall();
+    });
+
+    socket.on("call:declined", () => {
+      cleanupCall();
+      setCallDeclined({ reason: "declined", message: "Call declined by user" });
+    });
+
+    socket.on("call:busy", () => {
+      cleanupCall();
+      setCallDeclined({ reason: "busy", message: "User is busy on another call" });
+    });
+  };
+
+  const disconnectSocket = () => {
+    if (socketRef.current) {
+      socketRef.current.disconnect();
+      socketRef.current = null;
+    }
+  };
+
+  const fetchBootstrap = async () => {
+    try {
+      const [meRes, contactsRes, notificationsRes, callsRes] = await Promise.all([
+        api.get("/api/users/me"),
+        api.get("/api/contacts?status=accepted"),
+        api.get("/api/notifications"),
+        api.get("/api/calls")
+      ]);
+
+      setUser(meRes.data.user);
+      setContacts(contactsRes.data.contacts || []);
+      setNotifications(notificationsRes.data.notifications || []);
+      setCalls(callsRes.data.calls || []);
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to load data");
+    }
+  };
+
+  const handleAuthSubmit = async (mode, form) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const payload = {
+        email: form.email,
+        password: form.password
+      };
+
+      if (mode === "register") {
+        payload.username = form.username;
+        payload.displayName = form.displayName || form.username;
+      }
+
+      const response = await api.post(`/api/auth/${mode}`, payload);
+      setToken(response.data.token);
+    } catch (err) {
+      setError(err?.response?.data?.message || "Authentication failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleLogout = () => {
+    setToken("");
+  };
+
+  const searchUsers = async () => {
+    if (!searchQuery.trim()) {
+      setSearchResults([]);
+      return;
+    }
+
+    try {
+      const response = await api.get(`/api/users?query=${encodeURIComponent(searchQuery)}`);
+      setSearchResults(response.data.users || []);
+    } catch (err) {
+      setError(err?.response?.data?.message || "Search failed");
+    }
+  };
+
+  const sendContactRequest = async (contactUserId) => {
+    try {
+      await api.post("/api/contacts", { contactUserId });
+      setSearchResults((prev) => prev.filter((u) => u._id !== contactUserId));
+      fetchBootstrap();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to send request");
+    }
+  };
+
+  const acceptContactRequest = async (contactId) => {
+    if (!contactId) return;
+    try {
+      await api.patch(`/api/contacts/${contactId}/accept`);
+      fetchBootstrap();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to accept request");
+    }
+  };
+
+  const markNotificationRead = async (notificationId) => {
+    try {
+      await api.patch(`/api/notifications/${notificationId}/read`);
+      fetchBootstrap();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to mark read");
+    }
+  };
+
+  const endCallLog = async (callId) => {
+    try {
+      await api.patch(`/api/calls/${callId}/end`);
+      fetchBootstrap();
+    } catch (err) {
+      setError(err?.response?.data?.message || "Failed to end call log");
+    }
+  };
+
+  const createPeerConnection = (toUserId) => {
+    const pc = new RTCPeerConnection({
+      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.emit("call:ice", {
+          toUserId,
+          candidate: event.candidate,
+          callId: activeCall?.callId
+        });
+      }
+    };
+
+    pc.ontrack = (event) => {
+      setRemoteStream(event.streams[0]);
+    };
+
+    // Detect when peer connection is closed or fails
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.connectionState === "disconnected") {
+        cleanupCall();
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "closed") {
+        cleanupCall();
+      }
+    };
+
+    return pc;
+  };
+
+  const startLiveCall = async (toUserId, type) => {
+    if (!socketRef.current) {
+      setError("Socket not connected yet.");
+      return;
+    }
+
+    try {
+      const media = await navigator.mediaDevices.getUserMedia({
+        video: type === "video",
+        audio: true
+      });
+
+      localStreamRef.current = media;
+      setLocalStream(media);
+
+      const pc = createPeerConnection(toUserId);
+      pcRef.current = pc;
+
+      media.getTracks().forEach((track) => pc.addTrack(track, media));
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      setActiveCall({ toUserId, type, callId: null });
+      socketRef.current.emit("call:initiate", { toUserId, type, offer });
+    } catch (err) {
+      setError("Failed to start call");
+    }
+  };
+
+  const acceptIncomingCall = async () => {
+    if (!incomingCall || !socketRef.current) return;
+
+    try {
+      const media = await navigator.mediaDevices.getUserMedia({
+        video: incomingCall.type === "video",
+        audio: true
+      });
+
+      localStreamRef.current = media;
+      setLocalStream(media);
+
+      const pc = createPeerConnection(incomingCall.fromUserId);
+      pcRef.current = pc;
+
+      media.getTracks().forEach((track) => pc.addTrack(track, media));
+
+      await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      socketRef.current.emit("call:answer", {
+        callId: incomingCall.callId,
+        toUserId: incomingCall.fromUserId,
+        answer
+      });
+
+      setActiveCall({ toUserId: incomingCall.fromUserId, type: incomingCall.type, callId: incomingCall.callId });
+      setIncomingCall(null);
+    } catch (err) {
+      setError("Failed to accept call");
+    }
+  };
+
+  const declineIncomingCall = () => {
+    if (!incomingCall || !socketRef.current) return;
+
+    socketRef.current.emit("call:decline", {
+      callId: incomingCall.callId,
+      toUserId: incomingCall.fromUserId
+    });
+
+    setIncomingCall(null);
+    setCallDeclined({ reason: "declined", message: "You declined the call" });
+  };
+
+  const cleanupCall = () => {
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current = null;
+    }
+
+    setLocalStream(null);
+    setRemoteStream(null);
+    setIncomingCall(null);
+    setActiveCall(null);
+  };
+
+  const hangupCall = () => {
+    if (socketRef.current && activeCall) {
+      socketRef.current.emit("call:hangup", {
+        callId: activeCall.callId,
+        toUserId: activeCall.toUserId
+      });
+    }
+    cleanupCall();
+  };
+
+  // const [callDeclined, setCallDeclined] = useState(false);
+
+  return (
+    <div className="app">
+      <Header
+        user={user}
+        onLogout={handleLogout}
+        notificationCount={notifications.filter((item) => !item.read).length}
+        onToggleNotifications={() => {
+          if (showNotifications) {
+            if (notifTimerRef.current) {
+              clearTimeout(notifTimerRef.current);
+            }
+            setNotifClosing(true);
+            notifTimerRef.current = setTimeout(() => {
+              setShowNotifications(false);
+              setNotifClosing(false);
+            }, 200);
+          } else {
+            setNotifClosing(false);
+            setShowNotifications(true);
+          }
+        }}
+      />
+
+      <AlertBox message={error} />
+
+      {!isAuthed ? (
+        <AuthForm onSubmit={handleAuthSubmit} isLoading={loading} />
+      ) : (
+        <div className="layout">
+          <aside className="sidebar">
+            <div className="sidebar-nav">
+              <button
+                className={`nav-btn ${sidebarTab === "search" ? "active" : ""}`}
+                onClick={() => setSidebarTab("search")}
+              >
+                Search
+              </button>
+              <button
+                className={`nav-btn ${sidebarTab === "contacts" ? "active" : ""}`}
+                onClick={() => setSidebarTab("contacts")}
+              >
+                Contacts
+              </button>
+              <button
+                className={`nav-btn ${sidebarTab === "history" ? "active" : ""}`}
+                onClick={() => setSidebarTab("history")}
+              >
+                History
+              </button>
+            </div>
+
+            <div className="sidebar-panel">
+              {sidebarTab === "search" && (
+                <SearchUsers
+                  query={searchQuery}
+                  results={searchResults}
+                  onQueryChange={setSearchQuery}
+                  onSearch={searchUsers}
+                  onAddContact={sendContactRequest}
+                />
+              )}
+
+              {sidebarTab === "contacts" && (
+                <Contacts contacts={contacts} onStartCall={startLiveCall} />
+              )}
+
+              {sidebarTab === "history" && (
+                <CallHistory calls={calls} onEndCall={endCallLog} />
+              )}
+            </div>
+          </aside>
+
+          <main className="main-content">
+            {callDeclined && (
+              <CallDeclined
+                reason={callDeclined.reason}
+                message={callDeclined.message}
+                onDismiss={() => setCallDeclined(null)}
+              />
+            )}
+
+            <LiveCall
+              incomingCall={incomingCall}
+              activeCall={activeCall}
+              localStream={localStream}
+              remoteStream={remoteStream}
+              onAccept={acceptIncomingCall}
+              onDecline={declineIncomingCall}
+              onHangup={hangupCall}
+            />
+          </main>
+        </div>
+      )}
+
+      {isAuthed && showNotifications && (
+        <div
+          className="notif-overlay"
+          onClick={() => {
+            if (notifTimerRef.current) {
+              clearTimeout(notifTimerRef.current);
+            }
+            setNotifClosing(true);
+            notifTimerRef.current = setTimeout(() => {
+              setShowNotifications(false);
+              setNotifClosing(false);
+            }, 200);
+          }}
+        >
+          <div
+            className={`notif-panel ${notifClosing ? "closing" : ""}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="notif-header">
+              <h2>Notifications</h2>
+              <button
+                className="btn secondary"
+                onClick={() => {
+                  if (notifTimerRef.current) {
+                    clearTimeout(notifTimerRef.current);
+                  }
+                  setNotifClosing(true);
+                  notifTimerRef.current = setTimeout(() => {
+                    setShowNotifications(false);
+                    setNotifClosing(false);
+                  }, 200);
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <Notifications
+              notifications={notifications}
+              onAccept={acceptContactRequest}
+              onMarkRead={markNotificationRead}
+              hideTitle
+            />
+          </div>
+        </div>
+      )}
+      {callDeclined && <CallDeclined onDismiss={() => setCallDeclined(false)} />}
+    </div>
+  );
+}
+
+export default App;
