@@ -4,7 +4,7 @@ import env from "../config/env.js";
 import CallLog from "../models/CallLog.js";
 
 const setupSocket = (io) => {
-    const onlineUsers = new Map();
+    const onlineUsers = new Map(); // userId -> Set<socketId>
     const activeCalls = new Map(); // Track active calls: callId -> { caller, callee }
 
     io.on("connection", (socket) => {
@@ -14,9 +14,15 @@ const setupSocket = (io) => {
             try {
                 const payload = jwt.verify(token, env.jwtSecret);
                 socket.userId = payload.userId;
-                onlineUsers.set(socket.userId, socket.id);
+
+                // Add socket ID to user's Set (create if doesn't exist)
+                if (!onlineUsers.has(socket.userId)) {
+                    onlineUsers.set(socket.userId, new Set());
+                }
+                onlineUsers.get(socket.userId).add(socket.id);
+
                 socket.emit("auth:ok", { userId: socket.userId });
-                console.log("✅ User authenticated:", socket.userId, "Socket:", socket.id);
+                console.log(`✅ User authenticated: ${socket.userId}, Socket: ${socket.id}, Total sockets: ${onlineUsers.get(socket.userId).size}`);
 
                 io.emit("user:online", { userId: socket.userId });
             } catch (error) {
@@ -42,19 +48,22 @@ const setupSocket = (io) => {
                 return socket.emit("call:busy", { toUserId });
             }
 
-            const targetSocketId = onlineUsers.get(toUserId);
+            const targetSocketIds = onlineUsers.get(toUserId);
             const callId = nanoid(12);
+
+            // Check if user is online
+            const isOnline = targetSocketIds && targetSocketIds.size > 0;
 
             await CallLog.create({
                 callId,
                 caller: socket.userId,
                 callee: toUserId,
                 type,
-                status: targetSocketId ? "ongoing" : "missed",
+                status: isOnline ? "ongoing" : "missed",
                 startedAt: new Date()
             });
 
-            if (!targetSocketId) {
+            if (!isOnline) {
                 console.log(`👤 User ${toUserId} is offline`);
                 return socket.emit("call:unavailable", { callId, toUserId });
             }
@@ -63,41 +72,53 @@ const setupSocket = (io) => {
             activeCalls.set(callId, { caller: socket.userId, callee: toUserId });
             console.log(`✅ Call tracked: ${callId}`);
 
-            io.to(targetSocketId).emit("call:incoming", {
-                callId,
-                fromUserId: socket.userId,
-                type,
-                offer
+            // Emit to ALL socket IDs for the target user
+            targetSocketIds.forEach((socketId) => {
+                io.to(socketId).emit("call:incoming", {
+                    callId,
+                    fromUserId: socket.userId,
+                    type,
+                    offer
+                });
             });
-            console.log(`📤 call:incoming sent to ${toUserId}`);
+            console.log(`📤 call:incoming sent to ${toUserId} (${targetSocketIds.size} socket(s))`);
         });
 
         socket.on("call:answer", ({ callId, toUserId, answer }) => {
             console.log(`✅ Call answer: ${socket.userId} -> ${toUserId}`);
-            const targetSocketId = onlineUsers.get(toUserId);
-            if (!targetSocketId) {
+            const targetSocketIds = onlineUsers.get(toUserId);
+            if (!targetSocketIds || targetSocketIds.size === 0) {
                 console.log(`👤 Target user ${toUserId} not found`);
                 return socket.emit("call:unavailable", { callId, toUserId });
             }
 
-            io.to(targetSocketId).emit("call:answer", { callId, answer, fromUserId: socket.userId });
-            console.log(`📤 call:answer sent to ${toUserId}`);
+            // Emit to ALL socket IDs for the target user
+            targetSocketIds.forEach((socketId) => {
+                io.to(socketId).emit("call:answer", { callId, answer, fromUserId: socket.userId });
+            });
+            console.log(`📤 call:answer sent to ${toUserId} (${targetSocketIds.size} socket(s))`);
         });
 
         socket.on("call:ice", ({ callId, toUserId, candidate }) => {
-            const targetSocketId = onlineUsers.get(toUserId);
-            if (!targetSocketId) {
+            const targetSocketIds = onlineUsers.get(toUserId);
+            if (!targetSocketIds || targetSocketIds.size === 0) {
                 return;
             }
 
-            io.to(targetSocketId).emit("call:ice", { callId, candidate, fromUserId: socket.userId });
-            console.log(`❄️ ICE candidate forwarded: ${socket.userId} -> ${toUserId}`);
+            // Emit to ALL socket IDs for the target user
+            targetSocketIds.forEach((socketId) => {
+                io.to(socketId).emit("call:ice", { callId, candidate, fromUserId: socket.userId });
+            });
+            console.log(`❄️ ICE candidate forwarded: ${socket.userId} -> ${toUserId} (${targetSocketIds.size} socket(s))`);
         });
 
         socket.on("call:hangup", async ({ callId, toUserId }) => {
-            const targetSocketId = onlineUsers.get(toUserId);
-            if (targetSocketId) {
-                io.to(targetSocketId).emit("call:hangup", { callId, fromUserId: socket.userId });
+            const targetSocketIds = onlineUsers.get(toUserId);
+            if (targetSocketIds && targetSocketIds.size > 0) {
+                // Emit to ALL socket IDs for the target user
+                targetSocketIds.forEach((socketId) => {
+                    io.to(socketId).emit("call:hangup", { callId, fromUserId: socket.userId });
+                });
             }
 
             // Remove from active calls
@@ -111,9 +132,12 @@ const setupSocket = (io) => {
         });
 
         socket.on("call:decline", async ({ callId, toUserId }) => {
-            const targetSocketId = onlineUsers.get(toUserId);
-            if (targetSocketId) {
-                io.to(targetSocketId).emit("call:declined", { callId, fromUserId: socket.userId });
+            const targetSocketIds = onlineUsers.get(toUserId);
+            if (targetSocketIds && targetSocketIds.size > 0) {
+                // Emit to ALL socket IDs for the target user
+                targetSocketIds.forEach((socketId) => {
+                    io.to(socketId).emit("call:declined", { callId, fromUserId: socket.userId });
+                });
             }
 
             // Remove from active calls
@@ -140,10 +164,13 @@ const setupSocket = (io) => {
                 for (const [callId, callData] of activeCalls.entries()) {
                     if (callData.caller === socket.userId || callData.callee === socket.userId) {
                         const otherUserId = callData.caller === socket.userId ? callData.callee : callData.caller;
-                        const otherSocketId = onlineUsers.get(otherUserId);
+                        const otherSocketIds = onlineUsers.get(otherUserId);
 
-                        if (otherSocketId) {
-                            io.to(otherSocketId).emit("call:hangup", { callId, fromUserId: socket.userId });
+                        if (otherSocketIds && otherSocketIds.size > 0) {
+                            // Emit to ALL socket IDs for the other user
+                            otherSocketIds.forEach((socketId) => {
+                                io.to(socketId).emit("call:hangup", { callId, fromUserId: socket.userId });
+                            });
                         }
 
                         // Update call log
@@ -157,8 +184,19 @@ const setupSocket = (io) => {
                     }
                 }
 
-                onlineUsers.delete(socket.userId);
-                io.emit("user:offline", { userId: socket.userId });
+                // Remove this socket ID from the user's Set
+                const userSockets = onlineUsers.get(socket.userId);
+                if (userSockets) {
+                    userSockets.delete(socket.id);
+                    console.log(`🔌 Socket disconnected: ${socket.id}, Remaining sockets: ${userSockets.size}`);
+
+                    // If no more sockets for this user, delete the user and emit offline
+                    if (userSockets.size === 0) {
+                        onlineUsers.delete(socket.userId);
+                        io.emit("user:offline", { userId: socket.userId });
+                        console.log(`👤 User offline: ${socket.userId}`);
+                    }
+                }
             }
         });
     });

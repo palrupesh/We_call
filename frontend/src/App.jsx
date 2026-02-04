@@ -310,7 +310,7 @@ function App() {
 
     try {
       console.log("📞 Starting call to:", toUserId, "Type:", type);
-      
+
       try {
         const media = await navigator.mediaDevices.getUserMedia({
           video: type === "video" ? { width: 640, height: 480 } : false,
@@ -358,7 +358,7 @@ function App() {
 
     try {
       console.log("✅ Accepting call from:", incomingCall.fromUserId, "Type:", incomingCall.type);
-      
+
       try {
         const media = await navigator.mediaDevices.getUserMedia({
           video: incomingCall.type === "video" ? { width: 640, height: 480 } : false,
