@@ -356,15 +356,18 @@ select {
 
 .video-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
 }
 
 .video {
   width: 100%;
-  height: 200px;
+  height: 400px;
   background: #0f172a;
   border-radius: 12px;
+  object-fit: cover;
+  object-position: center;
 }
 
 @media (max-width: 900px) {
