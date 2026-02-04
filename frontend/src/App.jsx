@@ -309,30 +309,11 @@ function App() {
   const createPeerConnection = (toUserId) => {
     const pc = new RTCPeerConnection({
       iceServers: [
-        {
-          urls: "stun:stun.relay.metered.ca:80",
-        },
-        {
-          urls: "turn:global.relay.metered.ca:80",
-          username: "72d777e8a3d3b5418329b5e7",
-          credential: "gapfKSoKbkVyd/5e",
-        },
-        {
-          urls: "turn:global.relay.metered.ca:80?transport=tcp",
-          username: "72d777e8a3d3b5418329b5e7",
-          credential: "gapfKSoKbkVyd/5e",
-        },
-        {
-          urls: "turn:global.relay.metered.ca:443",
-          username: "72d777e8a3d3b5418329b5e7",
-          credential: "gapfKSoKbkVyd/5e",
-        },
-        {
-          urls: "turns:global.relay.metered.ca:443?transport=tcp",
-          username: "72d777e8a3d3b5418329b5e7",
-          credential: "gapfKSoKbkVyd/5e",
-        },
-      ],
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" }
+      ]
     });
 
     // end changes here
