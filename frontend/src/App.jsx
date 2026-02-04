@@ -382,7 +382,7 @@ function App() {
 
     pc.oniceconnectionstatechange = () => {
       console.log(`❄️ ICE Connection state: ${pc.iceConnectionState}`);
-      
+
       if (pc.iceConnectionState === "failed") {
         console.error("❌ ICE FAILED - Checking candidate types...");
         console.error("   Sender candidates:", pc.getStats());
