@@ -371,29 +371,43 @@ function App() {
     // Detect when peer connection is closed or fails
     pc.onconnectionstatechange = () => {
       console.log("🔗 Connection state:", pc.connectionState);
-      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
+      console.log(`   🔍 ICE Connection: ${pc.iceConnectionState}, ICE Gathering: ${pc.iceGatheringState}, Signaling: ${pc.signalingState}`);
+      if (pc.connectionState === "failed") {
+        console.error("❌ PEER CONNECTION FAILED - Candidates may not be connecting");
+        setError("Connection failed: Could not establish peer connection. Check network/TURN server.");
+      } else if (pc.connectionState === "closed") {
         cleanupCall();
       }
     };
 
-    // pc.oniceconnectionstatechange = () => {
-    //   console.log("❄️ ICE Connection state:", pc.iceConnectionState);
-    //   if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "closed") {
-    //     cleanupCall();
-    //   }
-    // };
-
-    // changes made here
     pc.oniceconnectionstatechange = () => {
-      console.log("❄️ ICE Connection state:", pc.iceConnectionState);
-      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
+      console.log(`❄️ ICE Connection state: ${pc.iceConnectionState}`);
+      
+      if (pc.iceConnectionState === "failed") {
+        console.error("❌ ICE FAILED - Checking candidate types...");
+        console.error("   Sender candidates:", pc.getStats());
+      } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
+        console.log("✅ ICE CONNECTION ESTABLISHED");
+      } else if (pc.iceConnectionState === "disconnected") {
+        console.warn("⚠️ ICE Disconnected - may reconnect...");
+      } else if (pc.iceConnectionState === "closed") {
         cleanupCall();
       }
     };
-    // end changes here
 
     pc.onicegatheringstatechange = () => {
-      console.log("🧊 ICE Gathering state:", pc.iceGatheringState);
+      console.log(`🧊 ICE Gathering state: ${pc.iceGatheringState}`);
+      if (pc.iceGatheringState === "complete") {
+        console.log("✅ All ICE candidates gathered");
+        // Optionally log candidate stats
+        pc.getStats().then(stats => {
+          stats.forEach(report => {
+            if (report.type === "candidate-pair" && report.state === "succeeded") {
+              console.log(`   ✅ Active candidate pair: ${report.availableOutgoingBitrate} bps`);
+            }
+          });
+        });
+      }
     };
 
     return pc;
