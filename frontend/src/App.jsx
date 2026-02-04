@@ -39,6 +39,9 @@ function App() {
 
   const socketRef = useRef(null);
   const pcRef = useRef(null);
+  // chagnes for handling race around condition
+  const pendingCandidatesRef = useRef([]);
+
   const localStreamRef = useRef(null);
   const notifTimerRef = useRef(null);
 
@@ -105,21 +108,62 @@ function App() {
       setIncomingCall(payload);
     });
 
+    // socket.on("call:answer", async ({ answer }) => {
+    //   if (pcRef.current && answer) {
+    //     await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+    //   }
+    // });
+
+    // socket.on("call:ice", async ({ candidate }) => {
+    //   if (pcRef.current && candidate) {
+    //     try {
+    //       await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+    //     } catch (err) {
+    //       console.error(err);
+    //     }
+    //   }
+    // });
+
+
+
+    // changes to solve race around condition
+
     socket.on("call:answer", async ({ answer }) => {
       if (pcRef.current && answer) {
-        await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+        await pcRef.current.setRemoteDescription(
+          new RTCSessionDescription(answer)
+        );
+
+        // Flush queued ICE
+        for (const candidate of pendingCandidatesRef.current) {
+          await pcRef.current.addIceCandidate(
+            new RTCIceCandidate(candidate)
+          );
+        }
+        pendingCandidatesRef.current = [];
+        console.log("✅ Flushed queued ICE candidates");
       }
     });
 
+
     socket.on("call:ice", async ({ candidate }) => {
-      if (pcRef.current && candidate) {
-        try {
-          await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-        } catch (err) {
-          console.error(err);
+      if (!pcRef.current || !candidate) return;
+
+      try {
+        if (pcRef.current.remoteDescription) {
+          await pcRef.current.addIceCandidate(
+            new RTCIceCandidate(candidate)
+          );
+          console.log("✅ ICE candidate added");
+        } else {
+          console.log("⏳ Queuing ICE candidate");
+          pendingCandidatesRef.current.push(candidate);
         }
+      } catch (err) {
+        console.error("Error adding ICE:", err);
       }
     });
+
 
     socket.on("call:hangup", () => {
       cleanupCall();
@@ -241,26 +285,69 @@ function App() {
     }
   };
 
+  // const createPeerConnection = (toUserId) => {
+  //   const pc = new RTCPeerConnection({
+  //     iceServers: [
+  //       { urls: "stun:stun.l.google.com:19302" },
+  //       { urls: "stun:stun1.l.google.com:19302" },
+  //       // Free TURN server for production fallback
+  //       {
+  //         urls: "turn:openrelay.metered.ca:80",
+  //         username: "openrelayproject",
+  //         credential: "openrelayproject"
+  //       },
+  //       {
+  //         urls: "turn:openrelay.metered.ca:443",
+  //         username: "openrelayproject",
+  //         credential: "openrelayproject"
+  //       }
+  //     ]
+  //   });
+
+  // changes made here
+
   const createPeerConnection = (toUserId) => {
     const pc = new RTCPeerConnection({
       iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        // Free TURN server for production fallback
         {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
+          urls: "stun:stun.relay.metered.ca:80",
         },
         {
-          urls: "turn:openrelay.metered.ca:443",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        }
-      ]
+          urls: "turn:global.relay.metered.ca:80",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+        {
+          urls: "turn:global.relay.metered.ca:80?transport=tcp",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+        {
+          urls: "turn:global.relay.metered.ca:443",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+        {
+          urls: "turns:global.relay.metered.ca:443?transport=tcp",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+      ],
     });
 
+    // end changes here
+
+
     pc.onicecandidate = (event) => {
+
+      // chagnes made here
+      if (event.candidate) {
+        console.log("Candidate type:", event.candidate.type);
+        console.log("Full candidate:", event.candidate.candidate);
+      }
+      //end changes here 
+
+
       if (event.candidate && socketRef.current) {
         socketRef.current.emit("call:ice", {
           toUserId,
@@ -270,6 +357,7 @@ function App() {
         console.log("📤 ICE Candidate sent:", event.candidate.candidate);
       }
     };
+
 
     pc.ontrack = (event) => {
       console.log("📥 Remote track received:", event.track.kind);
@@ -283,17 +371,26 @@ function App() {
     // Detect when peer connection is closed or fails
     pc.onconnectionstatechange = () => {
       console.log("🔗 Connection state:", pc.connectionState);
-      if (pc.connectionState === "failed" || pc.connectionState === "closed" || pc.connectionState === "disconnected") {
+      if (pc.connectionState === "failed" || pc.connectionState === "closed") {
         cleanupCall();
       }
     };
 
+    // pc.oniceconnectionstatechange = () => {
+    //   console.log("❄️ ICE Connection state:", pc.iceConnectionState);
+    //   if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "closed") {
+    //     cleanupCall();
+    //   }
+    // };
+
+    // changes made here
     pc.oniceconnectionstatechange = () => {
       console.log("❄️ ICE Connection state:", pc.iceConnectionState);
-      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "closed") {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
         cleanupCall();
       }
     };
+    // end changes here
 
     pc.onicegatheringstatechange = () => {
       console.log("🧊 ICE Gathering state:", pc.iceGatheringState);
@@ -379,6 +476,14 @@ function App() {
 
         console.log("📋 Setting remote description...");
         await pc.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
+        // 🔥 Flush queued ICE
+        for (const candidate of pendingCandidatesRef.current) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+        pendingCandidatesRef.current = [];
+        console.log("✅ Flushed queued ICE candidates");
+
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         console.log("📋 Answer created");
