@@ -45,6 +45,8 @@ function App() {
   const localStreamRef = useRef(null);
   const notifTimerRef = useRef(null);
 
+  const callIdRef = useRef(null);
+
   const isAuthed = useMemo(() => Boolean(token), [token]);
 
   // Register logout callback for API interceptor
@@ -105,6 +107,7 @@ function App() {
     });
 
     socket.on("call:incoming", (payload) => {
+      callIdRef.current = payload.callId; 
       setIncomingCall(payload);
     });
 
@@ -133,6 +136,8 @@ function App() {
         await pcRef.current.setRemoteDescription(
           new RTCSessionDescription(answer)
         );
+
+        callIdRef.current = answer.callId || callIdRef.current;
 
         // Flush queued ICE
         for (const candidate of pendingCandidatesRef.current) {
@@ -285,38 +290,25 @@ function App() {
     }
   };
 
-  // const createPeerConnection = (toUserId) => {
-  //   const pc = new RTCPeerConnection({
-  //     iceServers: [
-  //       { urls: "stun:stun.l.google.com:19302" },
-  //       { urls: "stun:stun1.l.google.com:19302" },
-  //       // Free TURN server for production fallback
-  //       {
-  //         urls: "turn:openrelay.metered.ca:80",
-  //         username: "openrelayproject",
-  //         credential: "openrelayproject"
-  //       },
-  //       {
-  //         urls: "turn:openrelay.metered.ca:443",
-  //         username: "openrelayproject",
-  //         credential: "openrelayproject"
-  //       }
-  //     ]
-  //   });
-
-  // changes made here
-
   const createPeerConnection = (toUserId) => {
+    pendingCandidatesRef.current = []; // Reset pending candidates for new connection
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
         { urls: "stun:stun1.l.google.com:19302" },
-        { urls: "stun:stun2.l.google.com:19302" },
-        { urls: "stun:stun3.l.google.com:19302" }
+        // Free TURN server for production fallback
+        {
+          urls: "turn:openrelay.metered.ca:80",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        },
+        {
+          urls: "turn:openrelay.metered.ca:443",
+          username: "openrelayproject",
+          credential: "openrelayproject"
+        }
       ]
     });
-
-    // end changes here
 
 
     pc.onicecandidate = (event) => {
@@ -333,7 +325,7 @@ function App() {
         socketRef.current.emit("call:ice", {
           toUserId,
           candidate: event.candidate,
-          callId: activeCall?.callId
+          callId: callIdRef.current
         });
         console.log("📤 ICE Candidate sent:", event.candidate.candidate);
       }
@@ -356,7 +348,6 @@ function App() {
       if (pc.connectionState === "failed") {
         console.error("❌ PEER CONNECTION FAILED - Candidates may not be connecting");
         setError("Connection failed: Could not establish peer connection. Check network/TURN server.");
-      } else if (pc.connectionState === "closed") {
         cleanupCall();
       }
     };
@@ -425,7 +416,9 @@ function App() {
         await pc.setLocalDescription(offer);
         console.log("📋 Offer created");
 
+        callIdRef.current = null; // Will be set when call is accepted
         setActiveCall({ toUserId, type, callId: null });
+
         socketRef.current.emit("call:initiate", { toUserId, type, offer });
       } catch (mediaErr) {
         // Handle getUserMedia specific errors

@@ -28,7 +28,7 @@ const apiLimiter = rateLimit({
     max: 300,
     keyGenerator: (req, res) => {
         // Use X-Forwarded-For if behind proxy, otherwise use IP
-        return req.ip || req.connection.remoteAddress || "unknown";
+        return req.ip || req.socket.remoteAddress || "unknown";
     },
     skip: (req, res) => {
         // Skip rate limiting for health checks and socket.io
