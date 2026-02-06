@@ -295,7 +295,7 @@ function App() {
   const createPeerConnection = (toUserId) => {
     pendingCandidatesRef.current = []; // Reset pending candidates for new connection
     const pc = new RTCPeerConnection({
-      ceServers: [
+      iceServers: [
         {
           urls: "stun:stun.relay.metered.ca:80",
         },
