@@ -157,7 +157,14 @@ function App() {
 
 
     socket.on("call:ice", async ({ candidate }) => {
-      if (!pcRef.current || !candidate) return;
+      if (!candidate) return;
+
+      // If PeerConnection doesn't exist yet (e.g. callee hasn't accepted), queue the candidate
+      if (!pcRef.current) {
+        console.log("⏳ Queuing ICE candidate (no PC yet)");
+        pendingCandidatesRef.current.push(candidate);
+        return;
+      }
 
       try {
         if (pcRef.current.remoteDescription) {
@@ -166,7 +173,7 @@ function App() {
           );
           console.log("✅ ICE candidate added");
         } else {
-          console.log("⏳ Queuing ICE candidate");
+          console.log("⏳ Queuing ICE candidate (no remote desc)");
           pendingCandidatesRef.current.push(candidate);
         }
       } catch (err) {
@@ -296,7 +303,8 @@ function App() {
   };
 
   const createPeerConnection = (toUserId) => {
-    pendingCandidatesRef.current = []; // Reset pending candidates for new connection
+    // Note: do NOT reset pendingCandidatesRef here — callee may have queued
+    // the caller's ICE candidates before accepting the call
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
@@ -333,10 +341,19 @@ function App() {
 
     pc.ontrack = (event) => {
       console.log("📥 Remote track received:", event.track.kind);
-      const remoteStream = event.streams[0];
-      if (remoteStream) {
-        setRemoteStream(remoteStream);
-        console.log("✅ Remote stream set:", remoteStream.id);
+      if (event.streams && event.streams[0]) {
+        setRemoteStream(event.streams[0]);
+        console.log("✅ Remote stream set:", event.streams[0].id);
+      } else {
+        // Fallback: some browsers don't attach streams, build one manually
+        setRemoteStream((prev) => {
+          const stream = prev || new MediaStream();
+          if (!stream.getTrackById(event.track.id)) {
+            stream.addTrack(event.track);
+          }
+          return stream;
+        });
+        console.log("✅ Remote track added to manual stream");
       }
     };
 
@@ -409,6 +426,8 @@ function App() {
       setError("Socket not connected yet.");
       return;
     }
+
+    pendingCandidatesRef.current = []; // Clean slate for new outgoing call
 
     try {
       console.log("📞 Starting call to:", toUserId, "Type:", type);
@@ -544,6 +563,8 @@ function App() {
       localStreamRef.current = null;
     }
 
+    pendingCandidatesRef.current = []; // Reset for next call
+    callIdRef.current = null;
     setLocalStream(null);
     setRemoteStream(null);
     setIncomingCall(null);
