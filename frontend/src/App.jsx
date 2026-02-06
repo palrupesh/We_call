@@ -293,10 +293,10 @@ function App() {
   const createPeerConnection = (toUserId) => {
     pendingCandidatesRef.current = []; // Reset pending candidates for new connection
     const pc = new RTCPeerConnection({
-      iceServers: [
-        {
-          urls: "stun:global.relay.metered.ca:80"
-        },
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }
+        // {
+        //   urls: "stun:global.relay.metered.ca:80"
+        // },
         // {
         //   urls: "turn:global.relay.metered.ca:80",
         //   username: "72d777e8a3d3b5418329b5e7",
