@@ -14,6 +14,8 @@ import "./App.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL;
+const TURN_USERNAME = import.meta.env.VITE_TURN_USERNAME;
+const TURN_CREDENTIAL = import.meta.env.VITE_TURN_CREDENTIAL;
 
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("wecall_token") || "");
@@ -107,7 +109,7 @@ function App() {
     });
 
     socket.on("call:incoming", (payload) => {
-      callIdRef.current = payload.callId; 
+      callIdRef.current = payload.callId;
       setIncomingCall(payload);
     });
 
@@ -293,21 +295,31 @@ function App() {
   const createPeerConnection = (toUserId) => {
     pendingCandidatesRef.current = []; // Reset pending candidates for new connection
     const pc = new RTCPeerConnection({
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: "stun:stun1.l.google.com:19302" },
-        // Free TURN server for production fallback
+      ceServers: [
         {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject"
+          urls: "stun:stun.relay.metered.ca:80",
         },
         {
-          urls: "turn:openrelay.metered.ca:443",
-          username: "openrelayproject",
-          credential: "openrelayproject"
-        }
-      ]
+          urls: "turn:in.relay.metered.ca:80",
+          username: TURN_USERNAME,
+          credential: TURN_CREDENTIAL,
+        },
+        {
+          urls: "turn:in.relay.metered.ca:80?transport=tcp",
+          username: TURN_USERNAME,
+          credential: TURN_CREDENTIAL,
+        },
+        {
+          urls: "turn:in.relay.metered.ca:443",
+          username: TURN_USERNAME,
+          credential: TURN_CREDENTIAL,
+        },
+        {
+          urls: "turns:in.relay.metered.ca:443?transport=tcp",
+          username: TURN_USERNAME,
+          credential: TURN_CREDENTIAL,
+        },
+      ],
     });
 
 
