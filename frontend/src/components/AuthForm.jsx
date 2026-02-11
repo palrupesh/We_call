@@ -22,7 +22,7 @@ function AuthForm({ onSubmit, isLoading }) {
     };
 
     return (
-        <section className="card form-card">
+        <section className="card form-card" style={{ width: "400px", margin: "10px auto" }}>
             <h2>{mode === "login" ? "Login" : "Create account"}</h2>
             <form onSubmit={handleSubmit}>
                 {mode === "register" && (
