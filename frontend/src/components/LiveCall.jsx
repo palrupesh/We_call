@@ -34,7 +34,7 @@ function LiveCall({ incomingCall, activeCall, localStream, remoteStream, onAccep
                 <div className="call-banner">
                     <div>
                         <strong>Incoming {incomingCall.type} call</strong>
-                        <p className="muted">From user: {incomingCall.fromUserId}</p>
+                        <p className="muted">From: {incomingCall.fromUser?.displayName || incomingCall.fromUser?.username || 'Unknown'}</p>
                     </div>
                     <div className="actions">
                         <button className="btn" onClick={onAccept}>

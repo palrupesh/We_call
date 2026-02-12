@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import { nanoid } from "nanoid";
 import env from "../config/env.js";
 import CallLog from "../models/CallLog.js";
+import User from "../models/User.js";
 
 const setupSocket = (io) => {
     const onlineUsers = new Map(); // userId -> Set<socketId>
@@ -72,11 +73,21 @@ const setupSocket = (io) => {
             activeCalls.set(callId, { caller: socket.userId, callee: toUserId });
             console.log(`✅ Call tracked: ${callId}`);
 
+            // Send callId back to the caller
+            socket.emit("call:initiated", { callId, toUserId });
+
+            // Fetch caller user info
+            const callerUser = await User.findById(socket.userId).select('username displayName');
+
             // Emit to ALL socket IDs for the target user
             targetSocketIds.forEach((socketId) => {
                 io.to(socketId).emit("call:incoming", {
                     callId,
                     fromUserId: socket.userId,
+                    fromUser: {
+                        username: callerUser?.username || 'Unknown',
+                        displayName: callerUser?.displayName || callerUser?.username || 'Unknown'
+                    },
                     type,
                     offer
                 });
@@ -122,13 +133,26 @@ const setupSocket = (io) => {
             }
 
             // Remove from active calls
-            activeCalls.delete(callId);
+            if (callId) {
+                activeCalls.delete(callId);
+            } else {
+                // Fallback: find and delete call by userId if callId is null
+                for (const [id, call] of activeCalls.entries()) {
+                    if (call.caller === socket.userId || call.callee === socket.userId) {
+                        activeCalls.delete(id);
+                        callId = id; // Use found callId for log update
+                        break;
+                    }
+                }
+            }
 
-            await CallLog.findOneAndUpdate(
-                { callId },
-                { status: "ended", endedAt: new Date() },
-                { new: true }
-            );
+            if (callId) {
+                await CallLog.findOneAndUpdate(
+                    { callId },
+                    { status: "ended", endedAt: new Date() },
+                    { new: true }
+                );
+            }
         });
 
         socket.on("call:decline", async ({ callId, toUserId }) => {

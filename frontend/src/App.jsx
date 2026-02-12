@@ -111,6 +111,12 @@ function App() {
       setIncomingCall(payload);
     });
 
+    socket.on("call:initiated", ({ callId, toUserId }) => {
+      callIdRef.current = callId;
+      setActiveCall(prev => prev ? { ...prev, callId } : prev);
+      console.log("✅ Call initiated with callId:", callId);
+    });
+
     // socket.on("call:answer", async ({ answer }) => {
     //   if (pcRef.current && answer) {
     //     await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
@@ -194,6 +200,11 @@ function App() {
     socket.on("call:busy", () => {
       cleanupCall();
       setCallDeclined({ reason: "busy", message: "User is busy on another call" });
+    });
+
+    socket.on("call:unavailable", () => {
+      cleanupCall();
+      setCallDeclined({ reason: "unavailable", message: "User is offline or unavailable" });
     });
   };
 
@@ -574,7 +585,7 @@ function App() {
   const hangupCall = () => {
     if (socketRef.current && activeCall) {
       socketRef.current.emit("call:hangup", {
-        callId: activeCall.callId,
+        callId: activeCall.callId || callIdRef.current,
         toUserId: activeCall.toUserId
       });
     }
