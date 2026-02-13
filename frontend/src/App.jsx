@@ -117,23 +117,6 @@ function App() {
       console.log("✅ Call initiated with callId:", callId);
     });
 
-    // socket.on("call:answer", async ({ answer }) => {
-    //   if (pcRef.current && answer) {
-    //     await pcRef.current.setRemoteDescription(new RTCSessionDescription(answer));
-    //   }
-    // });
-
-    // socket.on("call:ice", async ({ candidate }) => {
-    //   if (pcRef.current && candidate) {
-    //     try {
-    //       await pcRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-    //     } catch (err) {
-    //       console.error(err);
-    //     }
-    //   }
-    // });
-
-
 
     // changes to solve race around condition
 
@@ -318,13 +301,41 @@ function App() {
     // the caller's ICE candidates before accepting the call
     const pc = new RTCPeerConnection({
       iceServers: [
+
+        // google stun 
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'stun:stun2.l.google.com:19302' },
         { urls: 'stun:stun3.l.google.com:19302' },
         { urls: 'stun:stun4.l.google.com:19302' },
+
+        // metered stun/turn servers for better connectivity in restrictive networks
+        {
+          urls: "stun:stun.relay.metered.ca:80",
+        },
+        {
+          urls: "turn:in.relay.metered.ca:80",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+        {
+          urls: "turn:in.relay.metered.ca:80?transport=tcp",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+        {
+          urls: "turn:in.relay.metered.ca:443",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
+        {
+          urls: "turns:in.relay.metered.ca:443?transport=tcp",
+          username: "72d777e8a3d3b5418329b5e7",
+          credential: "gapfKSoKbkVyd/5e",
+        },
       ],
       iceCandidatePoolSize: 10,
+      // iceTransportPolicy:"relay"
     });
 
 
