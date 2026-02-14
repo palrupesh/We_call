@@ -8,8 +8,7 @@ import Contacts from "./components/Contacts";
 import Notifications from "./components/Notifications";
 import CallHistory from "./components/CallHistory";
 import LiveCall from "./components/LiveCall";
-import AlertBox from "./components/AlertBox";
-import CallDeclined from "./components/CallDeclined";
+import ToastNotification from "./components/ToastNotification";
 import "./App.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -18,7 +17,6 @@ const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || API_URL;
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("wecall_token") || "");
   const [user, setUser] = useState(null);
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const [contacts, setContacts] = useState([]);
@@ -32,10 +30,10 @@ function App() {
   const [activeCall, setActiveCall] = useState(null);
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
-  const [callDeclined, setCallDeclined] = useState(null);
-  const [sidebarTab, setSidebarTab] = useState("search");
+  const [sidebarTab, setSidebarTab] = useState("contacts");
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifClosing, setNotifClosing] = useState(false);
+  const [toastNotifications, setToastNotifications] = useState([]);
 
   const socketRef = useRef(null);
   const pcRef = useRef(null);
@@ -49,11 +47,28 @@ function App() {
 
   const isAuthed = useMemo(() => Boolean(token), [token]);
 
+  // Prevent body scroll when notifications are open
+  useEffect(() => {
+    if (showNotifications) {
+      document.body.classList.add("notif-open");
+    } else {
+      document.body.classList.remove("notif-open");
+    }
+    return () => {
+      document.body.classList.remove("notif-open");
+    };
+  }, [showNotifications]);
+
   // Register logout callback for API interceptor
   useEffect(() => {
     setLogoutCallback(() => {
       setToken("");
-      setError("Your session has expired. Please login again.");
+      showToast({
+        type: "error",
+        title: "Session Expired",
+        message: "Your session has expired. Please login again.",
+        duration: 0, // Persistent until dismissed
+      });
     });
   }, []);
 
@@ -94,7 +109,11 @@ function App() {
 
     socket.on("connect_error", (error) => {
       console.error("❌ Socket connection error:", error);
-      setError("Failed to connect to server. Please check your connection.");
+      showToast({
+        type: "error",
+        title: "Connection Error",
+        message: "Failed to connect to server. Please check your connection.",
+      });
     });
 
     socket.on("disconnect", () => {
@@ -102,8 +121,31 @@ function App() {
     });
 
     socket.on("auth:error", () => {
-      setError("Socket authentication failed. Please login again.");
+      showToast({
+        type: "error",
+        title: "Authentication Failed",
+        message: "Socket authentication failed. Please login again.",
+        duration: 0, // Persistent
+      });
       setToken(""); // Logout user on socket auth failure
+    });
+
+    socket.on("notification:new", (notification) => {
+      console.log("🔔 New notification received:", notification);
+      setNotifications((prev) => [notification, ...prev]);
+      showToast({
+        type: notification.type, // Use existing type (contact_request, missed_call, etc.)
+        title: formatNotificationType(notification.type),
+        message: notification.message,
+        duration: 4000,
+      });
+    });
+
+    socket.on("notification:updated", ({ notificationId, read }) => {
+      console.log("📝 Notification updated:", notificationId);
+      setNotifications((prev) =>
+        prev.map((n) => (n._id === notificationId ? { ...n, read } : n))
+      );
     });
 
     socket.on("call:incoming", (payload) => {
@@ -177,17 +219,32 @@ function App() {
 
     socket.on("call:declined", () => {
       cleanupCall();
-      setCallDeclined({ reason: "declined", message: "Call declined by user" });
+      showToast({
+        type: "warning",
+        title: "Call Declined",
+        message: "Call declined by user",
+        duration: 4000,
+      });
     });
 
     socket.on("call:busy", () => {
       cleanupCall();
-      setCallDeclined({ reason: "busy", message: "User is busy on another call" });
+      showToast({
+        type: "warning",
+        title: "User Busy",
+        message: "User is busy on another call",
+        duration: 4000,
+      });
     });
 
     socket.on("call:unavailable", () => {
       cleanupCall();
-      setCallDeclined({ reason: "unavailable", message: "User is offline or unavailable" });
+      showToast({
+        type: "warning",
+        title: "User Unavailable",
+        message: "User is offline or unavailable",
+        duration: 4000,
+      });
     });
   };
 
@@ -212,13 +269,16 @@ function App() {
       setNotifications(notificationsRes.data.notifications || []);
       setCalls(callsRes.data.calls || []);
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to load data");
+      showToast({
+        type: "error",
+        title: "Failed to Load Data",
+        message: err?.response?.data?.message || "Failed to load data",
+      });
     }
   };
 
   const handleAuthSubmit = async (mode, form) => {
     setLoading(true);
-    setError("");
 
     try {
       const payload = {
@@ -234,7 +294,11 @@ function App() {
       const response = await api.post(`/api/auth/${mode}`, payload);
       setToken(response.data.token);
     } catch (err) {
-      setError(err?.response?.data?.message || "Authentication failed");
+      showToast({
+        type: "error",
+        title: "Authentication Failed",
+        message: err?.response?.data?.message || "Authentication failed",
+      });
     } finally {
       setLoading(false);
     }
@@ -254,7 +318,11 @@ function App() {
       const response = await api.get(`/api/users?query=${encodeURIComponent(searchQuery)}`);
       setSearchResults(response.data.users || []);
     } catch (err) {
-      setError(err?.response?.data?.message || "Search failed");
+      showToast({
+        type: "error",
+        title: "Search Failed",
+        message: err?.response?.data?.message || "Search failed",
+      });
     }
   };
 
@@ -262,9 +330,19 @@ function App() {
     try {
       await api.post("/api/contacts", { contactUserId });
       setSearchResults((prev) => prev.filter((u) => u._id !== contactUserId));
+      showToast({
+        type: "success",
+        title: "Request Sent",
+        message: "Contact request sent successfully",
+        duration: 3000,
+      });
       fetchBootstrap();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to send request");
+      showToast({
+        type: "error",
+        title: "Request Failed",
+        message: err?.response?.data?.message || "Failed to send request",
+      });
     }
   };
 
@@ -272,18 +350,38 @@ function App() {
     if (!contactId) return;
     try {
       await api.patch(`/api/contacts/${contactId}/accept`);
+      showToast({
+        type: "success",
+        title: "Contact Added",
+        message: "Contact request accepted",
+        duration: 3000,
+      });
       fetchBootstrap();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to accept request");
+      showToast({
+        type: "error",
+        title: "Accept Failed",
+        message: err?.response?.data?.message || "Failed to accept request",
+      });
     }
   };
 
   const markNotificationRead = async (notificationId) => {
     try {
       await api.patch(`/api/notifications/${notificationId}/read`);
+      showToast({
+        type: "success",
+        title: "Marked as Read",
+        message: "Notification marked as read",
+        duration: 2000,
+      });
       fetchBootstrap();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to mark read");
+      showToast({
+        type: "error",
+        title: "Update Failed",
+        message: err?.response?.data?.message || "Failed to mark read",
+      });
     }
   };
 
@@ -292,7 +390,11 @@ function App() {
       await api.patch(`/api/calls/${callId}/end`);
       fetchBootstrap();
     } catch (err) {
-      setError(err?.response?.data?.message || "Failed to end call log");
+      showToast({
+        type: "error",
+        title: "Failed to End Call",
+        message: err?.response?.data?.message || "Failed to end call log",
+      });
     }
   };
 
@@ -394,7 +496,11 @@ function App() {
           pc.restartIce();
         } else {
           console.error("❌ PEER CONNECTION FAILED after ICE restarts");
-          setError("Connection failed: Could not establish peer connection. Please try again.");
+          showToast({
+            type: "error",
+            title: "Connection Failed",
+            message: "Could not establish peer connection. Please try again.",
+          });
           cleanupCall();
         }
       } else if (pc.connectionState === "connected") {
@@ -412,7 +518,11 @@ function App() {
           pc.restartIce();
         } else {
           console.error("❌ ICE FAILED after restarts");
-          setError("Connection failed: Could not establish peer connection. Please try again.");
+          showToast({
+            type: "error",
+            title: "Connection Failed",
+            message: "Could not establish peer connection. Please try again.",
+          });
           cleanupCall();
         }
       } else if (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") {
@@ -445,7 +555,11 @@ function App() {
 
   const startLiveCall = async (toUserId, type) => {
     if (!socketRef.current) {
-      setError("Socket not connected yet.");
+      showToast({
+        type: "error",
+        title: "Not Connected",
+        message: "Socket not connected yet.",
+      });
       return;
     }
 
@@ -494,7 +608,11 @@ function App() {
       }
     } catch (err) {
       console.error("❌ Call start error:", err);
-      setError("Failed to start call: " + (err.message || "Unknown error"));
+      showToast({
+        type: "error",
+        title: "Call Failed",
+        message: err.message || "Failed to start call",
+      });
     }
   };
 
@@ -558,7 +676,11 @@ function App() {
       }
     } catch (err) {
       console.error("❌ Call accept error:", err);
-      setError("Failed to accept call: " + (err.message || "Unknown error"));
+      showToast({
+        type: "error",
+        title: "Call Failed",
+        message: err.message || "Failed to accept call",
+      });
     }
   };
 
@@ -571,7 +693,12 @@ function App() {
     });
 
     setIncomingCall(null);
-    setCallDeclined({ reason: "declined", message: "You declined the call" });
+    showToast({
+      type: "info",
+      title: "Call Declined",
+      message: "You declined the call",
+      duration: 3000,
+    });
   };
 
   const cleanupCall = () => {
@@ -603,10 +730,35 @@ function App() {
     cleanupCall();
   };
 
+  const showToast = ({ type, title, message, duration = 5000 }) => {
+    const toastId = Math.random().toString(36).substring(2, 15);
+    setToastNotifications((prev) => [
+      ...prev,
+      {
+        type,
+        title,
+        message,
+        duration,
+        toastId,
+      },
+    ]);
+  };
+
+  const formatNotificationType = (type) => {
+    return type
+      .split("_")
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(" ");
+  };
+
+  const dismissToast = (toastId) => {
+    setToastNotifications((prev) => prev.filter((t) => t.toastId !== toastId));
+  };
+
   // const [callDeclined, setCallDeclined] = useState(false);
 
   return (
-    <div className="app">
+    <div className={`app ${showNotifications ? "notif-open" : ""}`}>
       <Header
         user={user}
         onLogout={handleLogout}
@@ -627,8 +779,6 @@ function App() {
           }
         }}
       />
-
-      <AlertBox message={error} />
 
       {!isAuthed ? (
         <AuthForm onSubmit={handleAuthSubmit} isLoading={loading} />
@@ -678,14 +828,6 @@ function App() {
           </aside>
 
           <main className="main-content">
-            {callDeclined && (
-              <CallDeclined
-                reason={callDeclined.reason}
-                message={callDeclined.message}
-                onDismiss={() => setCallDeclined(null)}
-              />
-            )}
-
             <LiveCall
               incomingCall={incomingCall}
               activeCall={activeCall}
@@ -744,7 +886,20 @@ function App() {
           </div>
         </div>
       )}
-      {callDeclined && <CallDeclined onDismiss={() => setCallDeclined(false)} />}
+
+      {/* Toast Notifications */}
+      <div className="toast-container">
+        {toastNotifications.map((toast) => (
+          <ToastNotification
+            key={toast.toastId}
+            type={toast.type}
+            title={toast.title}
+            message={toast.message}
+            duration={toast.duration}
+            onClose={() => dismissToast(toast.toastId)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

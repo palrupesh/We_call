@@ -20,6 +20,10 @@ body {
   background: #f8fafc;
 }
 
+body.notif-open {
+  overflow: hidden;
+}
+
 #root {
   max-width: 1200px;
   margin: 0 auto;

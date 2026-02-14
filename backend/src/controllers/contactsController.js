@@ -2,6 +2,8 @@ import { validationResult } from "express-validator";
 import Contact from "../models/Contact.js";
 import Notification from "../models/Notification.js";
 import User from "../models/User.js";
+import { getSocketInstance } from "../sockets/socketInstance.js";
+import { createAndEmitNotification } from "../utils/notificationEmitter.js";
 
 export const listContacts = async (req, res, next) => {
     try {
@@ -33,16 +35,22 @@ export const sendContactRequest = async (req, res, next) => {
             return res.status(404).json({ message: "User not found" });
         }
 
-        // Check if request already exists in either direction
+        // Check if any contact relationship already exists in either direction
         const existing = await Contact.findOne({
             $or: [
-                { userId: req.user._id, contactUserId, status: "pending" },
-                { userId: contactUserId, contactUserId: req.user._id, status: "pending" }
+                { userId: req.user._id, contactUserId },
+                { userId: contactUserId, contactUserId: req.user._id }
             ]
         });
 
         if (existing) {
-            return res.status(409).json({ message: "Contact request already exists" });
+            if (existing.status === "accepted") {
+                return res.status(409).json({ message: "Already in your contacts" });
+            } else if (existing.status === "pending") {
+                return res.status(409).json({ message: "Contact request already exists" });
+            } else if (existing.status === "blocked") {
+                return res.status(403).json({ message: "Cannot send request to blocked contact" });
+            }
         }
 
         // Only create contact from sender's perspective - status is pending
@@ -54,7 +62,8 @@ export const sendContactRequest = async (req, res, next) => {
         });
 
         // Send notification to receiver with sender's contact ID
-        await Notification.create({
+        const { io, onlineUsers } = getSocketInstance();
+        await createAndEmitNotification(io, onlineUsers, {
             userId: contactUserId,
             type: "contact_request",
             fromUserId: req.user._id,
@@ -87,16 +96,25 @@ export const acceptContactRequest = async (req, res, next) => {
         contact.status = "accepted";
         await contact.save();
 
-        // Create mutual contact for receiver as accepted
-        const reverseContact = await Contact.create({
+        // Check if reverse contact already exists (shouldn't, but safety check)
+        const existingReverse = await Contact.findOne({
             userId: req.user._id,
-            contactUserId: contact.userId,
-            status: "accepted",
-            initiatedBy: contact.initiatedBy
+            contactUserId: contact.userId
         });
 
+        // Create mutual contact for receiver as accepted only if it doesn't exist
+        if (!existingReverse) {
+            await Contact.create({
+                userId: req.user._id,
+                contactUserId: contact.userId,
+                status: "accepted",
+                initiatedBy: contact.initiatedBy
+            });
+        }
+
         // Notify sender that request was accepted
-        await Notification.create({
+        const { io, onlineUsers } = getSocketInstance();
+        await createAndEmitNotification(io, onlineUsers, {
             userId: contact.userId,
             type: "contact_accepted",
             fromUserId: req.user._id,

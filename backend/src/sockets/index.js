@@ -3,10 +3,15 @@ import { nanoid } from "nanoid";
 import env from "../config/env.js";
 import CallLog from "../models/CallLog.js";
 import User from "../models/User.js";
+import { setSocketInstance } from "./socketInstance.js";
+import { createAndEmitNotification } from "../utils/notificationEmitter.js";
 
 const setupSocket = (io) => {
     const onlineUsers = new Map(); // userId -> Set<socketId>
     const activeCalls = new Map(); // Track active calls: callId -> { caller, callee }
+
+    // Set socket instance for use across the application
+    setSocketInstance(io, onlineUsers);
 
     io.on("connection", (socket) => {
         console.log("🔌 New socket connection:", socket.id);
@@ -65,6 +70,16 @@ const setupSocket = (io) => {
             });
 
             if (!isOnline) {
+                // Create missed call notification
+                const callerUser = await User.findById(socket.userId).select('username displayName');
+                await createAndEmitNotification(io, onlineUsers, {
+                    userId: toUserId,
+                    type: "missed_call",
+                    fromUserId: socket.userId,
+                    message: `Missed ${type} call from ${callerUser?.displayName || callerUser?.username || 'Unknown'}`,
+                    data: { callId, type }
+                });
+
                 console.log(`👤 User ${toUserId} is offline`);
                 return socket.emit("call:unavailable", { callId, toUserId });
             }
